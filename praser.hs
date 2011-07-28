@@ -2,7 +2,9 @@
 import Control.Applicative( (<$), (<$>), Applicative(..), (<*), (*>) )
 
 import Data.Maybe
-import Data.Text                (Text,unpack)
+import Data.Char
+import Data.Text                (Text,split,empty)
+import qualified Data.Text as T
 import Data.Enumerator          (Iteratee)
 import Data.XML.Types           (Event,Name)
 
@@ -22,28 +24,19 @@ data Inheritance = NonVirtual
 -- Parse tree
 ----------------------------------------------------------------
 
-type ID = Int
+type ID = Text
 
 {-
-<ArrayType
-<Class
-<Constructor
 <Converter
-<CvQualifiedType
 <Destructor
 <Enumeration
 <Field
 <File
-<Function
 <FunctionType
-<FundamentalType
-<Method
-<Namespace
 <OperatorFunction
 <OperatorMethod
-<PointerType
-<ReferenceType
 <Struct
+
 <Typedef
 <Union
 <Variable
@@ -51,13 +44,38 @@ type ID = Int
 
 -- | Declaration in the header file
 data Declaration = 
-    Class Text [ID] [(ID, Access, Inheritance)]
-    -- ^ Class declaration: name, members, superclasses
+    Namespace Text [ID]
+    -- ^ Namesapce: name, list of members
+  | Class Text [ID] [(ID, Access, Inheritance)]
+    -- ^ Class name, members, superclasses
+  | Constructor       Text Access    [Maybe ID]
+    -- ^ Constructor: mangled name access mode and list of parameters
+  | Destructor        Text Access
+    -- ^ Destructor: mangled name, access mode
+  | Method       Text Text Access ID [Maybe ID]
+    -- ^ Class method: name, mangled name, access mode, return type, argument types
+  
   | Function Text (Maybe Text) ID [Maybe ID]
-    -- ^ Function: name, mangled name, return type, list of parameters
+    -- ^ Function name, mangled name, return type, list of parameters
+    
+    -- Types
+  
+  | FundametalType Text
+    -- ^ Basic C++ type
+  | PointerType     ID
+    -- ^ Declaration of pointer type
+  | ReferenceType   ID
+    -- ^ Reference to type 
+  | ArrayType       ID Text
+    -- ^ Array: type and size in textual form
+  | Typedef Text ID  
+    -- ^ Typedef: typedef name, type it points to
+    
+  --   | CvQualifiedType ID -- FIXME: const/volatile?
+  --     -- ^ Const/volatile marked type
   | JUNK
     -- ^ Really junk
-    deriving (Show)
+    deriving (Eq,Show)
            
 
 ----------------------------------------------------------------
@@ -66,15 +84,17 @@ data Declaration =
 ignore :: AttrParser a -> AttrParser a
 ignore p = p <* ignoreAttrs
 
-paramID nm = read . tail . unpack <$> requireAttr nm
+paramID :: Name -> AttrParser ID
+paramID nm = requireAttr nm
 
-
+paramIdList :: Name -> AttrParser [ID]
 paramIdList nm = do
   xs <- optionalAttr nm
   return $ case xs of 
              Nothing -> []
-             Just x  -> map (read . tail) . words . unpack $ x
+             Just x  -> filter (not . T.null) . split isSpace $ x
 
+paramAccess :: Name -> AttrParser Access
 paramAccess nm = do
   n <- requireAttr nm
   return $ case n of "public"    -> Public
@@ -82,6 +102,7 @@ paramAccess nm = do
                      "protected" -> Protected
                      _           -> error "Bad access"
 
+paramVirtual :: Name -> AttrParser Inheritance
 paramVirtual nm = do
   v <- requireAttr nm
   return $ case v of "0" -> NonVirtual
@@ -92,19 +113,22 @@ paramVirtual nm = do
 
 declaration :: (Monad m) 
             => Name
-            -> AttrParser ([a2] -> a)
-            -> Iteratee Event m (Maybe a2)
-            -> Iteratee Event m (Maybe (Int, a))
+            -> AttrParser ([x] -> a)
+            -> Iteratee Event m (Maybe x)
+            -> Iteratee Event m (Maybe (ID, a))
 declaration nm atts chld =
   tagName nm (ignore $ (,) <$> paramID "id" <*> atts) $ \(i,f) -> do
     xs <- many chld
     return (i, f xs)
 
-simpleDecl :: Monad m
-           => Name 
-           -> AttrParser a
-           -> Iteratee Event m (Maybe a)
-simpleDecl nm att = tagName nm (ignore att) return 
+simpleDecl :: Monad m => Name -> AttrParser a -> Iteratee Event m (Maybe (ID,a))
+simpleDecl nm att = subdecl nm ((,) <$> paramID "id" <*> att)
+
+subdecl :: Monad m
+        => Name 
+        -> AttrParser a
+        -> Iteratee Event m (Maybe a)
+subdecl nm att = tagName nm (ignore att) return 
 
 
 ignoreTags :: Monad m => Iteratee Event m (Maybe ())
@@ -112,30 +136,58 @@ ignoreTags = tagPredicate (const True) ignoreAttrs (const $ () <$ many ignoreTag
 
 ----------------------------------------------------------------
 
-parseClass :: Iteratee Event IO (Maybe (Int, Declaration))
+parseClass :: Iteratee Event IO (Maybe (ID, Declaration))
 parseClass = 
   declaration "Class" 
   (Class <$> requireAttr "name" <*> paramIdList "members")
-  (simpleDecl "Base" $ (,,) <$> paramID "type" <*> paramAccess "access" <*> paramVirtual "virtual")
+  (subdecl "Base" $ (,,) <$> paramID "type" <*> paramAccess "access" <*> paramVirtual "virtual")
 
-parseFunction :: Iteratee Event IO (Maybe (Int, Declaration))
+argumentList :: Iteratee Event IO (Maybe (Maybe ID))
+argumentList = choose [ subdecl   "Argument" $ (Just <$> paramID "type")
+                      , tagNoAttr "Ellipsis" (return Nothing)
+                      ]
+
+parseMethod :: Iteratee Event IO (Maybe (ID, Declaration))
+parseMethod = 
+  declaration "Method" 
+  (Method <$> requireAttr "name" <*> requireAttr "mangled" <*> paramAccess "access" <*> paramID "returns")
+  argumentList
+
+parseConstructor :: Iteratee Event IO (Maybe (ID, Declaration))
+parseConstructor =
+  declaration "Constructor"
+  (Constructor <$> requireAttr "mangled" <*> paramAccess "access")
+  argumentList
+
+parseFunction :: Iteratee Event IO (Maybe (ID, Declaration))
 parseFunction = 
   declaration "Function" 
   (Function <$> requireAttr "name" <*> optionalAttr "mangled" <*> paramID "returns")
-  (choose [ simpleDecl "Argument" $ (Just <$> paramID "type")
-          , tagNoAttr "Ellipsis" (return Nothing)
-          ])
-
+  argumentList
+  
+  
 ----------------------------------------------------------------
 parseGccXml = tagName "GCC_XML" ignoreAttrs $ const $ many 
-            $ choose [ parseClass
+            $ choose [ simpleDecl "Namespace" (Namespace <$> requireAttr "name" <*> paramIdList "members")
+                       -- Declarations
+                     , parseClass
+                     , parseConstructor
+                     , simpleDecl "Destructor" (Destructor <$> requireAttr "mangled" <*> paramAccess "access")
+                     , parseMethod
                      , parseFunction
-                     , fmap (const (0,JUNK)) <$> ignoreTags
+                       -- Types
+                     , simpleDecl "FundametalType" (FundametalType <$> requireAttr "name")
+                     , simpleDecl "PointerType"    (PointerType    <$> paramID     "type")
+                     , simpleDecl "ReferenceType"  (ReferenceType  <$> paramID     "type")
+                     , simpleDecl "ArrayType"      (ArrayType      <$> paramID     "type" <*> requireAttr "max")
+                     , simpleDecl "Typedef"        (Typedef        <$> requireAttr "name" <*> paramID "type")
+                       -- Take all JUNK
+                     , fmap (const (empty,JUNK)) <$> ignoreTags
                      ]
 
 
 
-go :: IO ()
-go = do
-  q <- parseFile_ "th1.xml" decodeEntities $ force "GCC XML" parseGccXml
-  mapM_ print q
+-- go :: IO ()
+go s = do
+  q <- parseFile_ s decodeEntities $ force "GCC XML" parseGccXml
+  mapM_ print $ filter ((/= JUNK) . snd) q
