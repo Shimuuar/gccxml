@@ -60,7 +60,7 @@ data ClassData = ClassData {
 data Declaration = 
     Namespace Text [ID]
     -- ^ Namesapce: name, list of members
-  | Enumeration Text [ID]
+  | Enumeration Text [(Text,Int)]
     -- ^ Enumeration 
   | Class ClassData
     -- ^ Class name, members, superclasses
@@ -179,6 +179,9 @@ parseGccXml = tagName "GCC_XML" ignoreAttrs $ const $ many
             $ choose [ simpleDecl "Namespace" (Namespace <$> requireAttr "name" <*> paramIdList "members")
                        -- Declarations
                      , parseClass
+                     , declaration "Enumeration" 
+                         (Enumeration <$> requireAttr "name")
+                         (subdecl "EnumValue" $ (,) <$> requireAttr "name" <*> paramNum "init")
                      , parseConstructor
                      , simpleDecl "Destructor" (Destructor <$> requireAttr "mangled" <*> paramAccess "access")
                      , parseMethod
