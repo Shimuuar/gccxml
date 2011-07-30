@@ -1,10 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
-import Control.Applicative( (<$), (<$>), Applicative(..), (<*), (*>) )
+import Control.Applicative( (<$), (<$>), Applicative(..), (<*), (*>), optional )
+import Control.Arrow
 import Control.Monad.IO.Class
 
 import Data.Maybe
 import Data.Char
-import Data.Text                (Text,split,empty)
+import Data.Text                (Text,split,empty,unpack)
 import qualified Data.Text as T
 import Data.Enumerator          (Iteratee)
 import Data.XML.Types           (Event,Name)
@@ -50,10 +51,12 @@ data SuperClass = SuperClass {
   , superOff     :: Int
   }
   deriving (Show,Eq)
+
 -- | Description of a class
 data ClassData = ClassData {
     className    :: Text         -- ^ Name of a class
-  , classSize    :: Int          -- ^ Size of a class in bytes
+  , classAlign   :: Int          -- ^ Alignment of a class
+  , classSize    :: Maybe Int    -- ^ Size of a class in bytes
   , classMembers :: [ID]         -- ^ ID's of class members
   , classSupers  :: [SuperClass] -- ^ Superclasses
   }
@@ -64,7 +67,7 @@ data ClassData = ClassData {
 data Declaration = 
     Namespace Text [ID]
     -- ^ Namesapce: name, list of members
-  | Class Text [ID] [(ID, Access, Inheritance)]
+  | Class ClassData
     -- ^ Class name, members, superclasses
   | Constructor       Text Access    [Maybe ID]
     -- ^ Constructor: mangled name access mode and list of parameters
@@ -104,6 +107,12 @@ ignore p = p <* ignoreAttrs
 
 paramID :: Name -> AttrParser ID
 paramID nm = requireAttr nm
+
+paramNum :: Name -> AttrParser Int
+paramNum nm = read . unpack <$> requireAttr nm
+
+paramSize :: Name -> AttrParser Int
+paramSize nm = (`div` 8) <$> paramNum nm
 
 paramIdList :: Name -> AttrParser [ID]
 paramIdList nm = do
@@ -156,9 +165,17 @@ ignoreTags = tagPredicate (const True) ignoreAttrs (const $ () <$ many ignoreTag
 
 parseClass :: MonadIO m => Iteratee Event m (Maybe (ID, Declaration))
 parseClass = 
-  declaration "Class" 
-  (Class <$> requireAttr "name" <*> paramIdList "members")
-  (subdecl "Base" $ (,,) <$> paramID "type" <*> paramAccess "access" <*> paramVirtual "virtual")
+  fmap (second Class) <$> 
+  ( declaration "Class" 
+    (ClassData <$> requireAttr "name" 
+               <*> paramSize   "align" 
+               <*> optional (paramSize   "size")
+               <*> paramIdList "members")
+    (subdecl "Base" $ SuperClass <$> paramID      "type" 
+                                 <*> paramAccess  "access" 
+                                 <*> paramVirtual "virtual" 
+                                 <*> paramSize    "offset")
+  )
 
 argumentList :: MonadIO m => Iteratee Event m (Maybe (Maybe ID))
 argumentList = choose [ subdecl   "Argument" $ (Just <$> paramID "type")
