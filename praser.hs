@@ -13,7 +13,7 @@
 -- > Union
 -- > Variable
 
-import Control.Applicative( (<$), (<$>), Applicative(..), (<*), (*>), optional )
+import Control.Applicative( (<$), (<$>), Applicative(..), (<|>), (<*), (*>), optional )
 import Control.Arrow
 import Control.Monad.IO.Class
 
@@ -44,6 +44,7 @@ type ID = Text
 
 {-
 -}
+
 
 data SuperClass = SuperClass {
     superID      :: ID
@@ -92,6 +93,8 @@ data Declaration =
     -- ^ Array: type and size in textual form
   | FunctionType ID [Maybe ID]
     -- ^ Pointer to function. Return type and argument type
+  | CvQualifiedType ID Bool Bool
+    -- ^ Const/volatile qualifier: type
   | Typedef Text ID  
     -- ^ Typedef: typedef name, type it points to
     
@@ -107,6 +110,9 @@ data Declaration =
 
 ignore :: AttrParser a -> AttrParser a
 ignore p = p <* ignoreAttrs
+
+haveParam :: Name -> AttrParser Bool
+haveParam nm = True <$ requireAttr nm <|> pure False
 
 paramID :: Name -> AttrParser ID
 paramID nm = requireAttr nm
@@ -214,13 +220,14 @@ parseGccXml = tagName "GCC_XML" ignoreAttrs $ const $ many
                      , parseMethod
                      , parseFunction
                        -- Types
-                     , simpleDecl "FundametalType" (FundametalType <$> requireAttr "name")
-                     , simpleDecl "PointerType"    (PointerType    <$> paramID     "type")
-                     , simpleDecl "ReferenceType"  (ReferenceType  <$> paramID     "type")
-                     , simpleDecl "ArrayType"      (ArrayType      <$> paramID     "type" <*> requireAttr "max")
-                     , declaration "FunctionType"  (FunctionType   <$> paramID     "returns")
-                                                   argumentList 
-                     , simpleDecl "Typedef"        (Typedef        <$> requireAttr "name" <*> paramID "type")
+                     , simpleDecl "FundametalType"  (FundametalType  <$> requireAttr "name")
+                     , simpleDecl "PointerType"     (PointerType     <$> paramID     "type")
+                     , simpleDecl "ReferenceType"   (ReferenceType   <$> paramID     "type")
+                     , simpleDecl "ArrayType"       (ArrayType       <$> paramID     "type" <*> requireAttr "max")
+                     , declaration "FunctionType"   (FunctionType    <$> paramID     "returns")
+                                                    argumentList 
+                     , simpleDecl "CvQualifiedType" (CvQualifiedType <$> paramID "type" <*> haveParam "const" <*> haveParam "volatile")
+                     , simpleDecl "Typedef"         (Typedef         <$> requireAttr "name" <*> paramID "type")
                        -- Take all JUNK
                      , fmap (const (empty,JUNK)) <$> ignoreTags
                      ]
