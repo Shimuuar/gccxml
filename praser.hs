@@ -42,6 +42,23 @@ type ID = Text
 <Variable
 -}
 
+data SuperClass = SuperClass {
+    superID      :: ID
+  , superMode    :: Access
+  , superVirtual :: Inheritance
+  , superOff     :: Int
+  }
+  deriving (Show,Eq)
+-- | Description of a class
+data ClassData = ClassData {
+    className    :: Text         -- ^ Name of a class
+  , classSize    :: Int          -- ^ Size of a class in bytes
+  , classMembers :: [ID]         -- ^ ID's of class members
+  , classSupers  :: [SuperClass] -- ^ Superclasses
+  }
+  deriving (Show,Eq)
+
+  
 -- | Declaration in the header file
 data Declaration = 
     Namespace Text [ID]
