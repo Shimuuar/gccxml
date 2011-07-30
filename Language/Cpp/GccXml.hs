@@ -3,7 +3,6 @@ module Language.Cpp.GccXml where
 -- |
 -- Following type are to be supported
 --
--- > Enumeration
 -- > OperatorFunction
 -- > OperatorMethod
 --
