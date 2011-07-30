@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 import Control.Applicative( (<$), (<$>), Applicative(..), (<*), (*>) )
+import Control.Monad.IO.Class
 
 import Data.Maybe
 import Data.Char
@@ -153,30 +154,30 @@ ignoreTags = tagPredicate (const True) ignoreAttrs (const $ () <$ many ignoreTag
 
 ----------------------------------------------------------------
 
-parseClass :: Iteratee Event IO (Maybe (ID, Declaration))
+parseClass :: MonadIO m => Iteratee Event m (Maybe (ID, Declaration))
 parseClass = 
   declaration "Class" 
   (Class <$> requireAttr "name" <*> paramIdList "members")
   (subdecl "Base" $ (,,) <$> paramID "type" <*> paramAccess "access" <*> paramVirtual "virtual")
 
-argumentList :: Iteratee Event IO (Maybe (Maybe ID))
+argumentList :: MonadIO m => Iteratee Event m (Maybe (Maybe ID))
 argumentList = choose [ subdecl   "Argument" $ (Just <$> paramID "type")
                       , tagNoAttr "Ellipsis" (return Nothing)
                       ]
 
-parseMethod :: Iteratee Event IO (Maybe (ID, Declaration))
+parseMethod :: MonadIO m => Iteratee Event m (Maybe (ID, Declaration))
 parseMethod = 
   declaration "Method" 
   (Method <$> requireAttr "name" <*> requireAttr "mangled" <*> paramAccess "access" <*> paramID "returns")
   argumentList
 
-parseConstructor :: Iteratee Event IO (Maybe (ID, Declaration))
+parseConstructor :: MonadIO m => Iteratee Event m (Maybe (ID, Declaration))
 parseConstructor =
   declaration "Constructor"
   (Constructor <$> requireAttr "mangled" <*> paramAccess "access")
   argumentList
 
-parseFunction :: Iteratee Event IO (Maybe (ID, Declaration))
+parseFunction :: MonadIO m => Iteratee Event m (Maybe (ID, Declaration))
 parseFunction = 
   declaration "Function" 
   (Function <$> requireAttr "name" <*> optionalAttr "mangled" <*> paramID "returns")
