@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+module Language.Cpp.GccXml where
 -- |
 -- Following type are to be supported
 --
@@ -28,30 +29,18 @@ import Data.XML.Types           (Event,Name)
 
 import Text.XML.Enumerator.Parse
 
-
-data Access = Public
-            | Protected
-            | Private
-            deriving (Eq,Show)
-
-data Inheritance = NonVirtual
-                 | Virtual
-                 deriving (Eq,Show)
                           
+import Language.Cpp.GccXml.XML
+import Language.Cpp.GccXml.Types
+
 ----------------------------------------------------------------
 -- Parse tree
 ----------------------------------------------------------------
 
-type ID = Text
-
-{-
--}
-
-
 data SuperClass = SuperClass {
     superID      :: ID
   , superMode    :: Access
-  , superVirtual :: Inheritance
+  , superVirtual :: Virtuality
   , superOff     :: Int
   }
   deriving (Show,Eq)
@@ -71,6 +60,8 @@ data ClassData = ClassData {
 data Declaration = 
     Namespace Text [ID]
     -- ^ Namesapce: name, list of members
+  | Enumeration Text [ID]
+    -- ^ Enumeration 
   | Class ClassData
     -- ^ Class name, members, superclasses
   | Constructor       Text Access    [Maybe ID]
@@ -105,50 +96,18 @@ data Declaration =
   | JUNK
     -- ^ Really junk
     deriving (Eq,Show)
-           
+
+
 
 ----------------------------------------------------------------
-
-
-ignore :: AttrParser a -> AttrParser a
-ignore p = p <* ignoreAttrs
-
-haveParam :: Name -> AttrParser Bool
-haveParam nm = True <$ requireAttr nm <|> pure False
-
-paramID :: Name -> AttrParser ID
-paramID nm = requireAttr nm
-
-paramNum :: Name -> AttrParser Int
-paramNum nm = read . unpack <$> requireAttr nm
-
-paramSize :: Name -> AttrParser Int
-paramSize nm = (`div` 8) <$> paramNum nm
-
-paramIdList :: Name -> AttrParser [ID]
-paramIdList nm = do
-  xs <- optionalAttr nm
-  return $ case xs of 
-             Nothing -> []
-             Just x  -> filter (not . T.null) . split isSpace $ x
-
-paramAccess :: Name -> AttrParser Access
-paramAccess nm = do
-  n <- requireAttr nm
-  return $ case n of "public"    -> Public
-                     "private"   -> Private
-                     "protected" -> Protected
-                     _           -> error "Bad access"
-
-paramVirtual :: Name -> AttrParser Inheritance
-paramVirtual nm = do
-  v <- requireAttr nm
-  return $ case v of "0" -> NonVirtual
-                     _   -> Virtual
-
+-- Combinators
 ----------------------------------------------------------------
 
+-- Simple declaration
+simpleDecl :: Monad m => Name -> AttrParser a -> Iteratee Event m (Maybe (ID,a))
+simpleDecl nm att = subdecl nm ((,) <$> paramID "id" <*> att)
 
+-- Declaration with nested elements
 declaration :: (Monad m) 
             => Name
             -> AttrParser ([x] -> a)
@@ -159,21 +118,26 @@ declaration nm atts chld =
     xs <- many chld
     return (i, f xs)
 
-simpleDecl :: Monad m => Name -> AttrParser a -> Iteratee Event m (Maybe (ID,a))
-simpleDecl nm att = subdecl nm ((,) <$> paramID "id" <*> att)
-
+-- Subdeclaration
 subdecl :: Monad m
         => Name 
         -> AttrParser a
         -> Iteratee Event m (Maybe a)
 subdecl nm att = tagName nm (ignore att) return 
 
-
+-- Ignore everything
 ignoreTags :: Monad m => Iteratee Event m (Maybe ())
 ignoreTags = tagPredicate (const True) ignoreAttrs (const $ () <$ many ignoreTags) 
 
 ----------------------------------------------------------------
 
+-- Parse argument list of a function
+argumentList :: MonadIO m => Iteratee Event m (Maybe (Maybe ID))
+argumentList = choose [ subdecl   "Argument" $ (Just <$> paramID "type")
+                      , tagNoAttr "Ellipsis" (return Nothing)
+                      ]
+
+-- Parse class
 parseClass :: MonadIO m => Iteratee Event m (Maybe (ID, Declaration))
 parseClass = 
   fmap (second Class) <$> 
@@ -188,23 +152,21 @@ parseClass =
                                  <*> paramSize    "offset")
   )
 
-argumentList :: MonadIO m => Iteratee Event m (Maybe (Maybe ID))
-argumentList = choose [ subdecl   "Argument" $ (Just <$> paramID "type")
-                      , tagNoAttr "Ellipsis" (return Nothing)
-                      ]
-
+-- Class method
 parseMethod :: MonadIO m => Iteratee Event m (Maybe (ID, Declaration))
 parseMethod = 
   declaration "Method" 
   (Method <$> requireAttr "name" <*> requireAttr "mangled" <*> paramAccess "access" <*> paramID "returns")
   argumentList
 
+-- Constructor
 parseConstructor :: MonadIO m => Iteratee Event m (Maybe (ID, Declaration))
 parseConstructor =
   declaration "Constructor"
   (Constructor <$> requireAttr "mangled" <*> paramAccess "access")
   argumentList
 
+-- Function
 parseFunction :: MonadIO m => Iteratee Event m (Maybe (ID, Declaration))
 parseFunction = 
   declaration "Function" 
