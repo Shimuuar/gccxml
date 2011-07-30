@@ -1,14 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- |
+-- Following type are to be supported
+--
+-- > Enumeration
+-- > OperatorFunction
+-- > OperatorMethod
+--
 -- Following tag from gcc-xml output are not parsed currently
 -- 
 -- > Converter
--- > Enumeration
 -- > Field
 -- > File
--- > FunctionType
--- > OperatorFunction
--- > OperatorMethod
 -- > Struct
 -- > Union
 -- > Variable
