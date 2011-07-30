@@ -1,4 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- |
+-- Following tag from gcc-xml output are not parsed currently
+-- 
+-- > Converter
+-- > Enumeration
+-- > Field
+-- > File
+-- > FunctionType
+-- > OperatorFunction
+-- > OperatorMethod
+-- > Struct
+-- > Union
+-- > Variable
+
 import Control.Applicative( (<$), (<$>), Applicative(..), (<*), (*>), optional )
 import Control.Arrow
 import Control.Monad.IO.Class
@@ -29,19 +43,6 @@ data Inheritance = NonVirtual
 type ID = Text
 
 {-
-<Converter
-<Destructor
-<Enumeration
-<Field
-<File
-<FunctionType
-<OperatorFunction
-<OperatorMethod
-<Struct
-
-<Typedef
-<Union
-<Variable
 -}
 
 data SuperClass = SuperClass {
@@ -89,6 +90,8 @@ data Declaration =
     -- ^ Reference to type 
   | ArrayType       ID Text
     -- ^ Array: type and size in textual form
+  | FunctionType ID [Maybe ID]
+    -- ^ Pointer to function. Return type and argument type
   | Typedef Text ID  
     -- ^ Typedef: typedef name, type it points to
     
@@ -215,6 +218,8 @@ parseGccXml = tagName "GCC_XML" ignoreAttrs $ const $ many
                      , simpleDecl "PointerType"    (PointerType    <$> paramID     "type")
                      , simpleDecl "ReferenceType"  (ReferenceType  <$> paramID     "type")
                      , simpleDecl "ArrayType"      (ArrayType      <$> paramID     "type" <*> requireAttr "max")
+                     , declaration "FunctionType"  (FunctionType   <$> paramID     "returns")
+                                                   argumentList 
                      , simpleDecl "Typedef"        (Typedef        <$> requireAttr "name" <*> paramID "type")
                        -- Take all JUNK
                      , fmap (const (empty,JUNK)) <$> ignoreTags
