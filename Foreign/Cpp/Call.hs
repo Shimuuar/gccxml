@@ -20,7 +20,7 @@ class Constructor obj args where
 
 -- | Object's destructor.
 class Destructor obj where
-  delete :: Object obj -> IO ()w
+  delete :: Object obj -> IO ()
 
 newtype Member method args = Member args
 

@@ -7,7 +7,8 @@ import Control.Applicative
 import Data.XML.Types             (Name)
 import Data.Text                  (unpack,words)
 
-import Text.XML.Enumerator.Parse
+--import Text.XML.Enumerator.Parse
+import Text.XML.Stream.Parse
 import Prelude                    hiding (words)
 
 import Language.Cpp.GccXml.Types
