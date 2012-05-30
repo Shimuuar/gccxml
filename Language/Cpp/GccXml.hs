@@ -125,10 +125,6 @@ subdecl :: MonadThrow m
         => Name 
         -> AttrParser a
         -> Sink Event m (Maybe a) 
-{-
-subdecl :: forall (m :: * -> *) b.
-           MonadThrow m =>
-           Name -> AttrParser b -> Sink Event m (Maybe b)-}
 subdecl nm att = tagName nm (ignore att) return 
 
 -- Ignore everything
@@ -199,7 +195,7 @@ parseGccXml = tagName "GCC_XML" ignoreAttrs $ const $ many
                      , parseMethod
                      , parseFunction
                        -- Types
-                     , simpleDecl "FundametalType"  (FundametalType  <$> requireAttr "name")
+                     , simpleDecl "FundamentalType"  (FundametalType  <$> requireAttr "name")
                      , simpleDecl "PointerType"     (PointerType     <$> paramID     "type")
                      , simpleDecl "ReferenceType"   (ReferenceType   <$> paramID     "type")
                      , simpleDecl "ArrayType"       (ArrayType       <$> paramID     "type" <*> requireAttr "max")
