@@ -1,6 +1,10 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 -- | Types for gcc-xml parser
-module Language.Cpp.GccXml.Types where
+module Language.Cpp.GccXml.Types (
+    ID
+  , Access(..)
+  , Virtuality(..)
+  ) where
 
 import Data.Data (Data,Typeable)
 import Data.Text (Text)

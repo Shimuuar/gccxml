@@ -1,4 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE OverloadedStrings  #-}
 module Language.Cpp.GccXml where
 -- |
 -- Following type are to be supported
@@ -7,7 +8,7 @@ module Language.Cpp.GccXml where
 -- > OperatorMethod
 --
 -- Following tag from gcc-xml output are not parsed currently
--- 
+--
 -- > Converter
 -- > Field
 -- > File
@@ -21,17 +22,18 @@ import Control.Arrow
 import Control.Monad.IO.Class
 
 import Data.Maybe
+import Data.Data
 import Data.Char
 import Data.Text                (Text,split,empty,unpack)
 import qualified Data.Text as T
 import Data.Conduit
 import Data.XML.Types           (Event,Name)
-import Data.Void 
+import Data.Void
 import Filesystem.Path (FilePath)
 
-import Text.XML.Stream.Parse 
+import Text.XML.Stream.Parse
 
-                          
+
 import Language.Cpp.GccXml.XML
 import Language.Cpp.GccXml.Types
 
@@ -39,15 +41,7 @@ import Language.Cpp.GccXml.Types
 -- Parse tree
 ----------------------------------------------------------------
 
-data SuperClass = SuperClass {
-    superID      :: ID
-  , superMode    :: Access
-  , superVirtual :: Virtuality
-  , superOff     :: Int
-  }
-  deriving (Show,Eq)
-
--- | Description of a class
+-- | Description of a C++ class
 data ClassData = ClassData {
     className    :: Text         -- ^ Name of a class
   , classAlign   :: Int          -- ^ Alignment of a class
@@ -55,44 +49,53 @@ data ClassData = ClassData {
   , classMembers :: [ID]         -- ^ ID's of class members
   , classSupers  :: [SuperClass] -- ^ Superclasses
   }
-  deriving (Show,Eq)
+  deriving (Show,Eq,Data,Typeable)
 
-  
+-- | Superclass for
+data SuperClass = SuperClass {
+    superID      :: ID
+  , superMode    :: Access
+  , superVirtual :: Virtuality
+  , superOff     :: Int
+  }
+  deriving (Show,Eq,Data,Typeable)
+
+
+
 -- | Declaration in the header file
-data Declaration = 
+data Declaration =
     Namespace Text [ID]
     -- ^ Namesapce: name, list of members
   | Enumeration Text [(Text,Int)]
-    -- ^ Enumeration 
+    -- ^ Enumeration
   | Class ClassData
-    -- ^ Class name, members, superclasses
-  | Constructor       Text Access    [Maybe ID]
-    -- ^ Constructor: mangled name access mode and list of parameters
-  | Destructor        Text Access
+    -- ^ Class description
+  | Constructor Text Access [Maybe ID]
+    -- ^ Class constructor: mangled name access mode and list of parameters
+  | Destructor  Text Access
     -- ^ Destructor: mangled name, access mode
-  | Method       Text Text Access ID [Maybe ID]
+  | Method      Text Text Access ID [Maybe ID]
     -- ^ Class method: name, mangled name, access mode, return type, argument types
-  
-  | Function Text (Maybe Text) ID [Maybe ID]
+    | Function Text (Maybe Text) ID [Maybe ID]
     -- ^ Function name, mangled name, return type, list of parameters
-    
+
     -- Types
-  
+
   | FundametalType Text
     -- ^ Basic C++ type
   | PointerType     ID
     -- ^ Declaration of pointer type
   | ReferenceType   ID
-    -- ^ Reference to type 
+    -- ^ Reference to type
   | ArrayType       ID Text
     -- ^ Array: type and size in textual form
   | FunctionType ID [Maybe ID]
     -- ^ Pointer to function. Return type and argument type
   | CvQualifiedType ID Bool Bool
     -- ^ Const/volatile qualifier: type
-  | Typedef Text ID  
+  | Typedef Text ID
     -- ^ Typedef: typedef name, type it points to
-    
+
   --   | CvQualifiedType ID -- FIXME: const/volatile?
   --     -- ^ Const/volatile marked type
   | JUNK
@@ -110,7 +113,7 @@ simpleDecl :: MonadThrow m => Name -> AttrParser a -> Sink Event m (Maybe (ID,a)
 simpleDecl nm att = subdecl nm ((,) <$> paramID "id" <*> att)
 
 -- Declaration with nested elements
-declaration :: (MonadThrow m) 
+declaration :: (MonadThrow m)
             => Name
             -> AttrParser ([x] -> a)
             -> Sink Event m (Maybe x)
@@ -122,72 +125,68 @@ declaration nm atts chld =
 
 -- Subdeclaration
 subdecl :: MonadThrow m
-        => Name 
+        => Name
         -> AttrParser a
-        -> Sink Event m (Maybe a) 
-subdecl nm att = tagName nm (ignore att) return 
+        -> Sink Event m (Maybe a)
+subdecl nm att = tagName nm (ignore att) return
 
 -- Ignore everything
--- ignoreTags :: Monad m => Iteratee Event m (Maybe ())
-ignoreTags :: Sink Event (ResourceT IO) (Maybe ())
-ignoreTags = tagPredicate (const True) ignoreAttrs (const $ () <$ many ignoreTags) 
+ignoreTags :: MonadThrow m => Sink Event (ResourceT m) (Maybe ())
+ignoreTags = tagPredicate (const True) ignoreAttrs (const $ () <$ many ignoreTags)
 
 ----------------------------------------------------------------
 
 -- Parse argument list of a function
-argumentList :: Sink Event (ResourceT IO) (Maybe (Maybe ID))
+argumentList :: MonadThrow m => Sink Event (ResourceT m) (Maybe (Maybe ID))
 argumentList = choose [ subdecl   "Argument" $ (Just <$> paramID "type")
                       , tagNoAttr "Ellipsis" (return Nothing)
                       ]
 
 -- Parse class
-parseClass :: Pipe
-              Event Void (ResourceT IO) (Maybe (ID, Declaration))
-parseClass = 
-  fmap (second Class) <$> 
-  ( declaration "Class" 
-    (ClassData <$> requireAttr "name" 
-               <*> paramSize   "align" 
+parseClass :: (MonadThrow m)
+           => Pipe Event Void (ResourceT m) (Maybe (ID, Declaration))
+parseClass =
+  fmap (second Class) <$>
+  ( declaration "Class"
+    (ClassData <$> requireAttr "name"
+               <*> paramSize   "align"
                <*> optional (paramSize   "size")
                <*> paramIdList "members")
-    (subdecl "Base" $ SuperClass <$> paramID      "type" 
-                                 <*> paramAccess  "access" 
-                                 <*> paramVirtual "virtual" 
+    (subdecl "Base" $ SuperClass <$> paramID      "type"
+                                 <*> paramAccess  "access"
+                                 <*> paramVirtual "virtual"
                                  <*> paramSize    "offset")
   )
 
 -- Class method
--- parseMethod :: MonadIO m => Iteratee Event m (Maybe (ID, Declaration))
-parseMethod :: Sink Event (ResourceT IO) (Maybe (ID, Declaration))
-parseMethod = 
-  declaration "Method" 
+parseMethod :: MonadThrow m => Sink Event (ResourceT m) (Maybe (ID, Declaration))
+parseMethod =
+  declaration "Method"
   (Method <$> requireAttr "name" <*> requireAttr "mangled" <*> paramAccess "access" <*> paramID "returns")
   argumentList
 
 -- Constructor
-parseConstructor :: Sink
-                    Event (ResourceT IO) (Maybe (ID, Declaration))
+parseConstructor :: MonadThrow m => Sink Event (ResourceT m) (Maybe (ID, Declaration))
 parseConstructor =
   declaration "Constructor"
   (Constructor <$> requireAttr "mangled" <*> paramAccess "access")
   argumentList
 
 -- Function
-parseFunction :: Sink
-                 Event (ResourceT IO) (Maybe (ID, Declaration))
-parseFunction = 
-  declaration "Function" 
+parseFunction :: MonadThrow m => Sink Event (ResourceT m) (Maybe (ID, Declaration))
+parseFunction =
+  declaration "Function"
   (Function <$> requireAttr "name" <*> optionalAttr "mangled" <*> paramID "returns")
   argumentList
-  
-  
+
+
 ----------------------------------------------------------------
-parseGccXml :: Sink Event (ResourceT IO) (Maybe [(ID, Declaration)])
-parseGccXml = tagName "GCC_XML" ignoreAttrs $ const $ many 
+parseGccXml :: MonadThrow m => Sink Event (ResourceT m) (Maybe [(ID, Declaration)])
+parseGccXml = tagName "GCC_XML" ignoreAttrs $ const $ many
             $ choose [ simpleDecl "Namespace" (Namespace <$> requireAttr "name" <*> paramIdList "members")
                        -- Declarations
                      , parseClass
-                     , declaration "Enumeration" 
+                     , declaration "Enumeration"
                          (Enumeration <$> requireAttr "name")
                          (subdecl "EnumValue" $ (,) <$> requireAttr "name" <*> paramNum "init")
                      , parseConstructor
@@ -200,7 +199,7 @@ parseGccXml = tagName "GCC_XML" ignoreAttrs $ const $ many
                      , simpleDecl "ReferenceType"   (ReferenceType   <$> paramID     "type")
                      , simpleDecl "ArrayType"       (ArrayType       <$> paramID     "type" <*> requireAttr "max")
                      , declaration "FunctionType"   (FunctionType    <$> paramID     "returns")
-                                                    argumentList 
+                                                    argumentList
                      , simpleDecl "CvQualifiedType" (CvQualifiedType <$> paramID "type" <*> haveParam "const" <*> haveParam "volatile")
                      , simpleDecl "Typedef"         (Typedef         <$> requireAttr "name" <*> paramID "type")
                        -- Take all JUNK
@@ -209,9 +208,9 @@ parseGccXml = tagName "GCC_XML" ignoreAttrs $ const $ many
 
 
 listGCCXml :: FilePath -> IO [(ID, Declaration)]
-listGCCXml s = 
+listGCCXml s =
     runResourceT $ parseFile def s $$  force "GCC XML" parseGccXml
-    
+
 go :: FilePath -> IO ()
 go s = do
   q <- runResourceT $ parseFile  def s $$ force "GCC XML" parseGccXml

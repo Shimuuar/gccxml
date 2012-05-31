@@ -1,6 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | Extra XML utilities
-module Language.Cpp.GccXml.XML where
+module Language.Cpp.GccXml.XML (
+    -- * Dealing with paramteters
+    ignore
+  , haveParam
+  , paramID
+  , paramIdList
+  , paramNum
+  , paramSize
+  , paramAccess
+  , paramVirtual
+  ) where
 
 import Control.Applicative
 
@@ -31,7 +41,7 @@ paramID nm = requireAttr nm
 paramIdList :: Name -> AttrParser [ID]
 paramIdList nm = do
   xs <- optionalAttr nm
-  return $ case xs of 
+  return $ case xs of
              Nothing -> []
              Just x  -> words x
 
